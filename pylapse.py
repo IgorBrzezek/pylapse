@@ -515,17 +515,28 @@ class TimelapseBuilder:
     def build_ffmpeg_command(self, files: List[Path]) -> List[str]:
         cmd = ["ffmpeg", "-y"]
 
-        if sys.platform == "win32":
-            pattern, detected_start, is_sequence = self.detect_sequence_pattern(files)
-            if is_sequence:
-                start = self.start_number if self.start_number is not None else detected_start
-                cmd.extend(["-start_number", str(start), "-i", str(self.input_dir / pattern)])
-            else:
+        # When frame_range is specified, use concat demuxer to ensure only selected frames are processed
+        use_concat = self.frame_range is not None
+
+        if sys.platform == "win32" or use_concat:
+            if use_concat:
+                # Force concat demuxer for frame range selection
                 file_list = self.input_dir / "filelist.txt"
                 with open(file_list, "w", encoding="utf-8") as f:
                     for img in files:
                         f.write(f"file '{img.name}'\n")
                 cmd.extend(["-f", "concat", "-safe", "0", "-i", str(file_list)])
+            else:
+                pattern, detected_start, is_sequence = self.detect_sequence_pattern(files)
+                if is_sequence:
+                    start = self.start_number if self.start_number is not None else detected_start
+                    cmd.extend(["-start_number", str(start), "-i", str(self.input_dir / pattern)])
+                else:
+                    file_list = self.input_dir / "filelist.txt"
+                    with open(file_list, "w", encoding="utf-8") as f:
+                        for img in files:
+                            f.write(f"file '{img.name}'\n")
+                    cmd.extend(["-f", "concat", "-safe", "0", "-i", str(file_list)])
         else:
             if self.pattern_type == "glob":
                 pattern = str(self.input_dir / "*.[jJ][pP][gG]")
