@@ -2,6 +2,8 @@
 
 Professional-grade Python script for creating high-quality timelapse videos from JPG image sequences using FFmpeg.
 
+**Version:** 0.0.5 (2026-08-30)
+
 ## Table of Contents
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -21,7 +23,7 @@ Professional-grade Python script for creating high-quality timelapse videos from
 
 ### Python Dependencies
 All required Python modules are part of the **standard library** (Python 3.7+):
-- `argparse`, `os`, `re`, `shutil`, `signal`, `subprocess`, `sys`, `time`
+- `argparse`, `os`, `re`, `shutil`, `signal`, `subprocess`, `sys`, `threading`, `time`
 - `pathlib`, `typing`, `json`, `tempfile`
 
 ### Supported Platforms
@@ -74,7 +76,7 @@ python pylapse --testlib
 ```
 Expected output:
 ```
-Timelapse Creator v0.0.1 - Igor Brzezek
+Timelapse Creator v0.0.5 - Igor Brzezek
 GitHub: https://github.com/IgorBrzezek
 
 Checking dependencies...
@@ -115,9 +117,11 @@ python pylapse -d ./photos -outfile timelapse.mp4 -framerate 24
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-fr`, `-framerate N` | 30 | Frames per second |
-| `-res`, `-resolution WxH` | Auto | Target resolution (e.g., 1920x1080) |
+| `-res`, `-resolution WxH` | Original size | Target resolution (e.g., 1920x1080; omit to keep original image size) |
 | `-c`, `-codec CODEC` | libx264 | Video codec |
 | `-crf N` | 18 | Constant Rate Factor (0-51, lower=better) |
+| `-rc`, `--rate-control` | constqp | NVENC rate control mode (constqp, vbr, cbr, vbr_minqp, ll_2pass_quality, ll_2pass_size, ll_2pass_bitrate) |
+| `-cq`, `--const-qp` | 18 | Constant QP for NVENC constqp mode (0-51, lower=better) |
 | `-preset PRESET` | slow | Encoding preset |
 | `-pix-fmt FMT` | yuv420p | Pixel format |
 
@@ -163,34 +167,59 @@ python pylapse -d ./photos -outfile timelapse.mp4 -framerate 24
 ### Image Processing
 | Option | Description |
 |--------|-------------|
-| `-rotate H\|V\|HV` | Flip: Horizontal, Vertical, or Both (180°) |
-| `-resize VAL` | Resize: `50%` (percentage), `1920` (width), `1080Y` (height) |
-| `-frames VAL` | Frame selection: `N` (first N), `N-M` (range), `-X` (last X) |
+| `-flip H\|V\|HV` | Flip: Horizontal, Vertical, or Both (180°) |
+| `--rotate N.M` | Rotate each image by N.M degrees (negative = left/counter-clockwise) |
+| `--rotate-cut` | Crop rotated image to remove black corners (largest inscribed rectangle) |
+| `-resize VAL` | Resize: `50%` (percentage), `1920` (width), `1080Y` (height). **Omit to keep the original image size (no scaling is applied)** |
+| `--fast-scale` | Use faster scaling filter (`bilinear`) instead of high quality (`lanczos`) |
+| `-frames VAL` | Frame selection: `N` (first N), `N-M` (range), `-X` (last X). **Omit to use ALL JPG files in the directory** |
 | `-sort NAME\|DATE` | Sort by filename (default) or modification date |
 
 ### Effects
 | Option | Description |
 |--------|-------------|
 | `--fadein N` | Fade in duration in seconds |
-| `--fadeout N` | Fade out duration in seconds |
+| `--fadeout N` | Fade out duration in seconds (should be less than video duration for visible end fade) |
 | `--text 'TEXT,START,END[,SCALE]'` | Text overlay (repeatable) |
+| `--addsound FILE[,BITRATE]` | Add audio from WAV/MP3 file; optional bitrate in kbps (e.g., `audio.wav,128`) |
+
+### Audio Options
+| Option | Description |
+|--------|-------------|
+| `--addsound FILE` | Add audio from WAV/MP3 file |
+| `--addsound FILE,BITRATE` | Add audio with specific bitrate (kbps); WAV default: 128kbps, MP3: auto |
+| `--loopsound` | Loop audio if shorter than video duration (repeat audio to match video duration) |
+| Audio fade | If `--fadein`/`--fadeout` used, audio fades in/out synchronously with video |
 
 ### Text Overlay Format
 ```
---text "Your text,start_sec,end_sec[,scale_percent]"
+--text "Your text,start_sec,end_sec[,scale_percent][,R,G,B]"
 ```
 - `TEXT` - Text to display (use `\n` for new lines)
 - `START` - Start time in seconds
 - `END` - End time in seconds
 - `SCALE` - Font size percentage (1-1000, default: 100)
+- `R,G,B` - RGB color values (0-255 each), e.g., `255,0,0` for red
 
 **Multiple overlays:** Repeat `--text` option
+
+**Color examples:**
+```
+# Red text at 150% size
+--text "Hello,5,10,150,255,0,0"
+
+# Blue text with default size
+--text "Hello,5,10,,0,0,255"
+
+# Green text with default size (no scale)
+--text "Hello,5,10,100,0,255,0"
+```
 
 ### Output Control
 | Option | Description |
 |--------|-------------|
 | `--overwrite` | Overwrite existing output file |
-| `--dry-run` | Show FFmpeg command without executing |
+| `--dry-run` | Show FFmpeg command, estimated duration (HH:MM:SS.mmm), and estimated file size without executing |
 | `-v`, `--verbose` | Verbose output |
 | `-h` | Show short help |
 | `--help` | Show full help with examples |
@@ -200,11 +229,19 @@ python pylapse -d ./photos -outfile timelapse.mp4 -framerate 24
 
 ### Basic Timelapse
 ```bash
-# 30 fps, auto resolution (max 1920x1080)
+# 30 fps, original image size (no scaling)
 python pylapse -d ./photos -outfile timelapse.mp4
 
 # 24 fps cinematic
 python pylapse -d ./photos -outfile timelapse.mp4 -framerate 24
+```
+
+### Fast Encoding (pre-scaled photos)
+```bash
+# Fastest NVENC path: p1 preset + fast scale, no resize (photos already scaled)
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  -codec h264_nvenc -preset p1 -rc constqp -cq 18 --fast-scale \
+  --addsound music.mp3 --loopsound --overwrite
 ```
 
 ### High Quality Production
@@ -250,7 +287,43 @@ python pylapse -d ./photos -outfile timelapse.mp4 \
   --text "Start,0,5,200" \
   --text "Middle\nSection,30,40,150" \
   --text "End,55,60,100" \
-  -resize 50% -frames 100-200 -sort DATE
+-resize 50% -frames 100-200 -sort DATE
+```
+
+### Rotation & Audio Examples
+```bash
+# Rotation
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --rotate 90
+
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --rotate -45.5
+
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  -flip H --rotate 45
+
+# Rotation with crop (remove black corners)
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --rotate 30 --rotate-cut
+
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --rotate -45 --rotate-cut
+
+# Audio
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --addsound music.mp3
+
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --addsound narration.wav,128
+
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --addsound music.mp3 --fadein 3 --fadeout 3
+
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --addsound short_jingle.wav --loopsound
+
+python pylapse -d ./photos -outfile timelapse.mp4 \
+  --addsound music.mp3 --fadein 3 --fadeout 3 --loopsound
 ```
 
 ### Development & Testing
@@ -258,7 +331,7 @@ python pylapse -d ./photos -outfile timelapse.mp4 \
 # Check dependencies
 python pylapse --testlib
 
-# Preview FFmpeg command (dry run)
+# Preview FFmpeg command (dry run) - shows estimated duration and file size
 python pylapse -d ./photos -outfile test.mp4 --dry-run
 
 # Verbose output
@@ -275,12 +348,39 @@ The script automatically detects numbered sequences:
 
 On Windows, uses concat demuxer for better compatibility.
 
-### Auto Resolution Scaling
-Without `-resolution`, images are scaled to fit within 1920x1080 preserving aspect ratio:
-- Landscape: width ≤ 1920
-- Portrait: height ≤ 1080
+### Original Image Size by Default
+If neither `-resolution` nor `-resize` is given, images are **not scaled** - the video keeps the original
+image size (useful when photos are already pre-scaled). The `scale` filter is only added when a resize
+option is explicitly requested.
+
+### Encoder Size Limit Warning
+The script estimates the final frame size (taking `-resize`, `--rotate` and `--rotate-cut` into account)
+and checks it against the encoder's maximum supported resolution:
+
+| Codec family | Maximum frame |
+|--------------|---------------|
+| `h264_*` (nvenc/amf/qsv/videotoolbox, libx264) | 4096x4096 |
+| `hevc_*`, `av1_*` (nvenc/amf/qsv/videotoolbox, libx265, libsvtav1) | 8192x8192 |
+
+When `-level` is set for H.264, the level's frame-size budget (macroblocks) is also verified.
+If the frame would be too large, a clear warning is printed before encoding, with a suggestion to use
+`-resize`, lower `-level`, or switch codec (e.g., `hevc_nvenc`).
+
+**Note:** H.264 NVENC on a 4096x4096 limit means large originals (e.g., 5184x3888) rotated and cropped
+may exceed the limit - either `-resize` them or use `hevc_nvenc` (8192x8192).
+
+### Fast Scaling
+`--fast-scale` switches the resize filter from `lanczos` (best quality, slowest) to `bilinear` (slightly
+lower quality, noticeably faster). Combined with `-preset p1` it gives the fastest encode throughput.
+
+### Scaled-Before-Rotated Filter Chain
+`scale` runs **before** `rotate`, so rotation is applied to far fewer pixels. With `--rotate-cut` the crop
+is recomputed proportionally to the post-resize dimensions, keeping the largest-inscribed-rectangle
+behavior correct at any target size.
 
 ### Frame Selection
+If `-frames` is omitted, **all** JPG files in the input directory are used (one video frame per photo).
+
 | Format | Example | Description |
 |--------|---------|-------------|
 | `N` | `100` | First 100 frames |
@@ -316,10 +416,15 @@ Real-time encoding progress with:
 - Encoding speed multiplier
 - ETA
 
-### Graceful Interruption
-- `Ctrl+C` (SIGINT) stops encoding cleanly
+### Graceful Interruption & Reliability
+- `Ctrl+C` (SIGINT) stops encoding cleanly and removes the incomplete output file
+- **Stall detection:** if FFmpeg reports no progress for 60s a warning is shown; after 180s the process is
+  killed automatically and the broken output is removed
+- **Partial-file cleanup:** any interrupted/failed encoding deletes the unusable (no `moov` atom) output
+- **Output verification:** after encoding, the file is checked with `ffprobe` (video stream, plus audio
+  when `--addsound` was used) before reporting success
 - Temporary text files cleaned up automatically
-- Returns exit code 130
+- Returns exit code 130 on interruption
 
 ## Troubleshooting
 
@@ -357,10 +462,12 @@ python pylapse -d ./photos -outfile out.mp4 --overwrite
 
 ### Performance Tips
 1. **Use GPU codec** for 10-50x speedup
-2. **Resize input** with `-resize 50%` for faster encoding
-3. **Limit frames** with `-frames` for testing
-4. **Use `-preset fast`** for quick previews
-5. **Dry run first** with `--dry-run` to verify command
+2. **Use `-preset p1`** (fastest NVENC) for quick encodes
+3. **Add `--fast-scale`** to speed up any resizing (bilinear instead of lanczos)
+4. **Skip resize for pre-scaled photos** - the script keeps the original size by default
+5. **Resize input** with `-resize 50%` for faster encoding of large originals
+6. **Limit frames** with `-frames` for testing
+7. **Dry run first** with `--dry-run` to verify command
 
 ### Common Error Codes
 | Code | Meaning |
@@ -374,6 +481,6 @@ python pylapse -d ./photos -outfile out.mp4 --overwrite
 
 **Author:** Igor Brzezek  
 **GitHub:** https://github.com/IgorBrzezek  
-**Version:** 0.0.1 (2026-08-28)
+**Version:** 0.0.5 (2026-08-30)
 
 Script uses standard library only. FFmpeg licensed under LGPL/GPL.
