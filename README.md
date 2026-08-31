@@ -2,7 +2,7 @@
 
 Professional-grade Python script for creating high-quality timelapse videos from JPG image sequences using FFmpeg.
 
-**Version:** 0.0.5 (2026-08-30)
+**Version:** 0.0.6 (2026-08-31)
 
 ## Table of Contents
 - [Requirements](#requirements)
@@ -76,7 +76,7 @@ python pylapse --testlib
 ```
 Expected output:
 ```
-Timelapse Creator v0.0.5 - Igor Brzezek
+Timelapse Creator v0.0.6 - Igor Brzezek
 GitHub: https://github.com/IgorBrzezek
 
 Checking dependencies...
@@ -105,13 +105,68 @@ python pylapse -d ./photos -outfile timelapse.mp4
 python pylapse -d ./photos -outfile timelapse.mp4 -framerate 24
 ```
 
+## Revert (Extract Frames from Video)
+
+Turn a video (MP4) back into a series of JPG stills. Works the other way from the main
+timelapse builder. Two selection modes:
+
+- **`-revert FR`** - read every **FR-th** frame of the movie (single FFmpeg pass)
+- **`--timecode TIMES`** - grab a frame at each explicit timestamp (accurate seeking)
+
+```bash
+# Extract every 10th frame as JPGs
+python pylapse -d ./frames --infile sunset_final.mp4 -revert 10
+
+# Every 10th frame, heavier JPEG compression (default quality 10)
+python pylapse -d ./frames --infile sunset_final.mp4 -revert 10 --compress 40
+
+# Frames at specific timestamps (S, M:S, or H:M:S; decimals allowed)
+python pylapse -d ./frames --infile sunset_final.mp4 --timecode 0:05,0:10,0:20
+
+# Half-size, rotated 90 degrees
+python pylapse -d ./frames --infile sunset_final.mp4 -revert 10 --scale 50 --rotate 90
+```
+
+### Revert Options
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-d`, `--dir DIR` | — | **Output** directory where the JPG images are saved (created if missing) |
+| `--infile MOVIE` | — | Input video file (MP4) to extract frames from (required in revert mode) |
+| `-revert FR` | — | Extract every FR-th frame: `1` = every frame, `2` = every 2nd, `10` = every 10th. Mutually exclusive with `--timecode` |
+| `--timecode TIMES` | — | Comma-separated timestamps to grab a frame at each, e.g., `0:05,0:10,0:20` (`S`, `M:S`, `H:M:S`, decimals OK). Sorted, no duplicates. Mutually exclusive with `-revert` |
+| `--compress %` | 10 | JPEG compression degree `0-100`: `0` = best quality / least compression, `100` = maximum compression. Internal quality maps to FFmpeg `q:v` (1-31) |
+| `--scale N` | (none) | Scale JPGs to `N%` of the original size (e.g., `50` = 50%) |
+| `--width N` | (none) | Exact output width for JPGs (height auto, keeps aspect ratio) |
+| `--height N` | (none) | Exact output height for JPGs (width auto, keeps aspect ratio) |
+| `-resize VAL` | (none) | Alternate resize: `50%`, `1920`, or `1080Y` (same resize engine as timelapse) |
+| `--rotate N.M` | (none) | Rotate each JPG by N.M degrees (negative = left/counter-clockwise) |
+| `--rotate-cut` | off | Crop rotated JPG to remove black corners (largest inscribed rectangle) |
+| `-flip H\|V\|HV` | (none) | Flip each JPG: Horizontal, Vertical, or Both (180°) |
+| `--fast-scale` | off | Faster scaling (`bilinear`) instead of high quality (`lanczos`) |
+
+**Resize precedence when several are given:** `--scale` > `--width`/`--height` > `-resize`.
+
+**Output naming:** `<video_stem>_NNNN.jpg` (e.g., from `sunset_final.mp4` you get
+`sunset_final_0001.jpg`, `sunset_final_0002.jpg`, ...). `--timecode` names frames in
+timestamp order (`_0001` = earliest). Files inherit the video's resolution unless a
+resize option is given. If a timestamp falls past the end of the video, a warning is
+printed and that frame is skipped.
+
+**Note:** `--compress` is the inverse of radius/quality - lower value = larger, sharper
+files; higher value = smaller files with more compression artifacts.
+
 ## Options Reference
 
-### Required Arguments
+### Required / Mode Arguments
 | Option | Description |
 |--------|-------------|
-| `-d`, `--dir DIR` | Directory containing JPG files |
-| `-outfile`, `--output FILE` | Output video file (MP4) |
+| `-d`, `--dir DIR` | Directory: input JPGs for **timelapse** mode, output JPGs for **revert** mode |
+| `-outfile`, `--output FILE` | Output video file (MP4) — timelapse mode |
+| `--infile MOVIE` | Input video file (MP4) to extract frames from — revert mode |
+| `-revert FR` | Extract every FR-th frame from the video — revert mode |
+| `--timecode TIMES` | Grab a frame at each comma-separated timestamp — revert mode |
+| `--compress %` | JPEG compression 0-100 for revert (0=best, default 10) |
+| `--scale / --width / --height` | Output size of extracted JPGs — revert mode |
 
 ### Video Settings
 | Option | Default | Description |
@@ -234,6 +289,24 @@ python pylapse -d ./photos -outfile timelapse.mp4
 
 # 24 fps cinematic
 python pylapse -d ./photos -outfile timelapse.mp4 -framerate 24
+```
+
+### Revert (Extract Frames from Video)
+```bash
+# Extract every 10th frame to ./frames as JPGs (default quality 10)
+python pylapse -d ./frames --infile sunset_final.mp4 -revert 10
+
+# Every 5th frame, lighter JPEG compression (0 = best quality)
+python pylapse -d ./frames --infile sunset_final.mp4 -revert 5 --compress 5
+
+# Every 2nd frame, heavy compression (saves small files, previews)
+python pylapse -d ./frames --infile sunset_final.mp4 -revert 2 --compress 70
+
+# Specific frames by timestamp, resized to 1920px wide
+python pylapse -d ./frames --infile sunset_final.mp4 --timecode 0:05,0:10,0:20 --width 1920
+
+# Half-size thumbnails rotated 90 degrees
+python pylapse -d ./frames --infile sunset_final.mp4 -revert 10 --scale 50 --rotate 90
 ```
 
 ### Fast Encoding (pre-scaled photos)
@@ -416,6 +489,13 @@ Real-time encoding progress with:
 - Encoding speed multiplier
 - ETA
 
+**Revert (video -> JPG)** shows a similar real-time status line while extracting:
+- `[N/M images]` - JPG files saved so far / expected total
+- Percentage complete (of the JPGs to produce)
+- Elapsed time (`Elapsed:`)
+- Output rate (`imgs/s`)
+- ETA to finish
+
 ### Graceful Interruption & Reliability
 - `Ctrl+C` (SIGINT) stops encoding cleanly and removes the incomplete output file
 - **Stall detection:** if FFmpeg reports no progress for 60s a warning is shown; after 180s the process is
@@ -481,6 +561,6 @@ python pylapse -d ./photos -outfile out.mp4 --overwrite
 
 **Author:** Igor Brzezek  
 **GitHub:** https://github.com/IgorBrzezek  
-**Version:** 0.0.5 (2026-08-30)
+**Version:** 0.0.6 (2026-08-31)
 
 Script uses standard library only. FFmpeg licensed under LGPL/GPL.

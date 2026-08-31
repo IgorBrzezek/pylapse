@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Optional, Tuple, List
 
 
-SCRIPT_VER = '0.0.5'
-SCRIPT_DATE = '30.08.2026'
+SCRIPT_VER = '0.0.6'
+SCRIPT_DATE = '31.08.2026'
 SCRIPT_AUTHOR = 'Igor Brzezek'
 SCRIPT_GIT = 'https://github.com/IgorBrzezek'
 
@@ -147,18 +147,30 @@ class TimelapseBuilder:
         self.addsound_bitrate: Optional[int] = None
         self.loopsound: bool = False
         self._needs_audio_loop: bool = False
+        self.infile: Optional[Path] = None
+        self.revert_frames: Optional[int] = None
+        self.compress: int = 10
+        self.scale_percent: Optional[float] = None
+        self.width_out: Optional[int] = None
+        self.height_out: Optional[int] = None
+        self.timecode_str: Optional[str] = None
+        self.timecodes: List[float] = []
 
     def print_short_help(self) -> None:
         print(f"{SCRIPT_NAME} v{SCRIPT_VER} - {SCRIPT_AUTHOR}")
         print(f"GitHub: {SCRIPT_GIT}")
         print()
-        print("Usage: pylapse -d DIR -outfile FILE [OPTIONS]")
+        print("Usage (create timelapse):")
+        print("  pylapse -d DIR -outfile FILE [OPTIONS]")
+        print()
+        print("Usage (extract frames from video):")
+        print("  pylapse -d DIR --infile FILE -revert N [--compress %]")
         print()
         print("Required:")
-        print("  -d, --dir DIR         Directory containing JPG files")
-        print("  -outfile, --output    Output video file (MP4)")
+        print("  -d, --dir DIR         Directory (input JPGs for timelapse, output JPGs for revert)")
+        print("  -outfile, --output    Output video file (MP4) - for timelapse mode")
         print()
-        print("Options:")
+        print("Timelapse options:")
         print("  -fr, -framerate N     Frames per second (default: 30)")
         print("  -res, -resolution WxH Target resolution (e.g., 1920x1080)")
         print("  -c, -codec CODEC      Video codec (default: libx264)")
@@ -187,6 +199,25 @@ class TimelapseBuilder:
         print("  --text 'T,S,E[,S][,R,G,B]'    Text: text, start sec, end sec, scale%, RGB 0-255 (repeatable)")
         print("  --addsound FILE       Add audio from file (WAV/MP3), optional bitrate: 'FILE,BITRATE' (e.g., 'audio.wav,128')")
         print("  --loopsound           Loop audio if shorter than video (repeat audio to match video duration)")
+        print()
+        print("Revert (video -> JPG):")
+        print("  --infile MOVIE        Input video file (MP4) to extract frames from")
+        print("  -revert FR            Extract every FR-th frame from the video (e.g., 10 = every 10th frame)")
+        print("  --timecode TIMES      Extract a frame at each comma-separated timestamp (e.g., '0:10,1:30,2:45').")
+        print("                        Mutually exclusive with -revert.")
+        print("  --compress %          JPEG compression degree 0-100 (0=best quality, 100=most compressed, default: 10)")
+        print()
+        print("Revert quality (JPG output):")
+        print("  --scale N             Scale JPGs to N% of original size (e.g., 50 = 50%%)")
+        print("  --width N             Exact output width for JPGs (height auto, keeps aspect)")
+        print("  --height N            Exact output height for JPGs (width auto, keeps aspect)")
+        print("  -resize VAL           Alt. resizing: 50%%, 1920, or 1080Y (same resize engine as timelapse)")
+        print("  --rotate N.M          Rotate each JPG by N.M degrees (negative = left)")
+        print("  --rotate-cut          Crop rotated JPG to remove black corners")
+        print("  -flip H|V|HV          Flip each JPG: H=horizontal, V=vertical, HV=both (180 deg)")
+        print("  --fast-scale          Use faster scaling (bilinear) instead of high quality (lanczos)")
+        print()
+        print("General:")
         print("  --overwrite           Overwrite output file if exists")
         print("  --dry-run             Show FFmpeg command, estimated duration & size")
         print("  -v, --verbose         Verbose output")
@@ -246,6 +277,31 @@ class TimelapseBuilder:
         print("  --text:                'TEXT,START,END[,SCALE][,R,G,B]' scale% (1-1000, default 100), RGB 0-255, \\n for new line")
         print("  --addsound:            'FILE[,BITRATE]' audio file (WAV/MP3), bitrate in kbps (default: 128 for WAV)")
         print("  --loopsound:           flag (loop audio if shorter than video duration)")
+        print()
+        print("Revert options (video -> JPG extraction):")
+        print("  --infile:              input video file path (e.g., sunset_final.mp4)")
+        print("  -revert:               integer - extract every N-th frame from the video")
+        print("                         1 = every frame, 2 = every 2nd frame, 10 = every 10th frame")
+        print("  --timecode:            comma-separated timestamps to grab a frame at each, e.g.:")
+        print("                         '0:10,1:30,2:45' (S, M:S, or H:M:S; decimals allowed, e.g., 1:30.5)")
+        print("                         sorted, duplicates forbidden; mutually exclusive with -revert")
+        print("  --compress:            integer 0-100 (JPEG compression degree)")
+        print("                         0 = best quality / least compression (q:v ~1)")
+        print("                         100 = maximum compression / worst quality (q:v ~31)")
+        print("                         Default: 10 (very good quality)")
+        print("  --scale:               float 0-100 - scale JPGs to a % of original size (e.g., 50 = 50%%)")
+        print("  --width:               integer - exact output width (height auto, keeps aspect ratio)")
+        print("  --height:              integer - exact output height (width auto, keeps aspect ratio)")
+        print("  -resize:               NN% | NNNN (width) | NNNNY (height) - alternate resize engine")
+        print("  --rotate:              float degrees - rotate each JPG (negative = left)")
+        print("  --rotate-cut:          flag - crop rotated JPG to remove black corners")
+        print("  -flip:                 H | V | HV - flip each JPG")
+        print("  --fast-scale:          flag - faster scaling (bilinear) instead of lanczos")
+        print("                         Resize precedence: --scale > --width/--height > -resize")
+        print("  Output naming:         {stem}_0001.jpg, {stem}_0002.jpg, ... ({stem} = input name without ext).")
+        print("                         --timecode names frames in timestamp order: {stem}_0001.jpg ...")
+        print()
+        print("General:")
         print("  --overwrite:           flag (overwrite existing output file)")
         print("  --dry-run:             flag (show FFmpeg command, estimated duration & size)")
         print()
@@ -266,6 +322,14 @@ class TimelapseBuilder:
         print("  pylapse -d ./photos -outfile timelapse.mp4 -resize 50% -frames 10-100 -sort DATE")
         print("  pylapse -d ./photos -outfile timelapse.mp4 --addsound music.mp3 --fadein 3 --fadeout 3")
         print("  pylapse -d ./photos -outfile timelapse.mp4 --addsound jingle.wav --loopsound")
+        print()
+        print("Revert examples (extract frames from a video into JPGs):")
+        print("  pylapse -d results --infile sunset_final.mp4 -revert 1")
+        print("  pylapse -d results --infile sunset_final.mp4 -revert 10")
+        print("  pylapse -d results --infile sunset_final.mp4 -revert 10 --compress 20")
+        print("  pylapse -d results --infile sunset_final.mp4 -revert 10 --scale 50 --rotate 90")
+        print("  pylapse -d results --infile sunset_final.mp4 --timecode 0:10,1:30,2:45 --width 1920")
+        print("  # -> saves results/sunset_final_0001.jpg, _0002.jpg, ...")
 
     def parse_args(self) -> None:
         import sys
@@ -285,8 +349,15 @@ class TimelapseBuilder:
             add_help=False,
         )
 
-        parser.add_argument("-d", "--dir", required=True, help="Directory containing JPG files")
-        parser.add_argument("-outfile", "--output", required=True, help="Output video file (MP4)")
+        parser.add_argument("-d", "--dir", required=True, help="Directory (input JPGs for timelapse, output JPGs for revert)")
+        parser.add_argument("-outfile", "--output", help="Output video file (MP4) for timelapse mode")
+        parser.add_argument("--infile", help="Input video file (MP4) to extract frames from (revert mode)")
+        parser.add_argument("-revert", type=int, help="Extract every FR-th frame from the video (revert mode): 1=every frame, 10=every 10th")
+        parser.add_argument("--compress", type=int, default=10, help="JPEG compression degree 0-100 for revert, 0=best quality (default: 10)")
+        parser.add_argument("--scale", type=float, help="Scale output JPGs to a percentage of the original (e.g., 50 = 50%%) - revert mode")
+        parser.add_argument("--width", type=int, help="Exact output width for JPGs (height auto, keeps aspect ratio) - revert mode")
+        parser.add_argument("--height", type=int, help="Exact output height for JPGs (width auto, keeps aspect ratio) - revert mode")
+        parser.add_argument("--timecode", help="Extract a specific frame at each comma-separated timestamp (e.g., '0:10,1:30,2:45') - revert mode")
         parser.add_argument("-framerate", "-fr", type=int, default=30, help="Frames per second (default: 30)")
         parser.add_argument("-resolution", "-res", help="Target resolution WxH (e.g., 1920x1080, 3840x2160)")
         parser.add_argument("-codec", "-c", default="libx264", help="Video codec (default: libx264)")
@@ -323,7 +394,25 @@ class TimelapseBuilder:
         args = parser.parse_args()
 
         self.input_dir = Path(args.dir).resolve()
-        self.output_file = Path(args.output).resolve()
+        self.revert_frames = args.revert
+        self.compress = args.compress
+        self.timecode_str = args.timecode
+        if args.scale is not None:
+            if args.scale <= 0 or args.scale > 100:
+                parser.error("--scale must be between 0 and 100 (percentage)")
+            self.scale_percent = args.scale / 100.0
+        if args.width is not None:
+            if args.width <= 0:
+                parser.error("--width must be a positive integer")
+            self.width_out = args.width
+        if args.height is not None:
+            if args.height <= 0:
+                parser.error("--height must be a positive integer")
+            self.height_out = args.height
+        if args.infile:
+            self.infile = Path(args.infile).resolve()
+        if args.output:
+            self.output_file = Path(args.output).resolve()
         self.framerate = args.framerate
         self.codec = args.codec
         self.crf = args.crf
@@ -369,6 +458,39 @@ class TimelapseBuilder:
                 self.target_resolution = (w, h)
             except ValueError:
                 parser.error("Resolution must be in format WxH (e.g., 1920x1080)")
+
+        is_revert = self.infile is not None or (self.revert_frames is not None) or (self.timecode_str is not None)
+
+        # --- Validate compression range ---
+        if not (0 <= self.compress <= 100):
+            parser.error("--compress must be between 0 and 100 (0=best quality, 100=most compressed)")
+
+        # --- Revert mode validation ---
+        if is_revert:
+            if self.timecode_str is not None and self.revert_frames is not None:
+                parser.error("--timecode and -revert are mutually exclusive. Use one of them.")
+            if self.timecode_str is None and self.revert_frames is None:
+                parser.error("Specify either -revert <FR> (every FR-th frame) or --timecode TIMES "
+                             "(explicit timestamps) when using --infile.")
+            if self.revert_frames is not None and self.revert_frames < 1:
+                parser.error("-revert FR must be a positive integer (1 = every frame, 2 = every 2nd, etc.)")
+            if self.timecode_str is not None:
+                self._parse_timecode(self.timecode_str, parser)
+            if self.infile is None:
+                parser.error("--infile MOVIE is required in revert mode")
+            if not self.infile.exists() or not self.infile.is_file():
+                parser.error(f"Input video file does not exist: {self.infile}")
+            if self.output_file is not None:
+                print("Note: -outfile is ignored in revert mode. Frames are saved as JPGs in the -d directory.",
+                      file=sys.stderr)
+            # Revert supports --scale/--width/--height + -resize for resizing,
+            # and --rotate/-flip for orientation. These reuse the same filters.
+            return
+
+        # --- Timelapse mode validation ---
+        if self.output_file is None:
+            parser.error("Missing -outfile. Use '-outfile FILE' for timelapse mode, "
+                         "or '--infile MOVIE -revert FR' for revert mode.")
 
         if not self.input_dir.exists() or not self.input_dir.is_dir():
             parser.error(f"Input directory does not exist: {self.input_dir}")
@@ -449,6 +571,47 @@ class TimelapseBuilder:
                     raise ValueError
             except ValueError:
                 raise argparse.ArgumentTypeError("Width must be a positive integer (e.g., 1920)")
+
+    def _parse_timecode(self, value: str, parser) -> List[float]:
+        """Parse a comma-separated list of timestamps (e.g., '0:10,1:30,2:45') into seconds."""
+        self.timecodes = []
+        for tok in value.split(","):
+            tok = tok.strip()
+            if not tok:
+                raise argparse.ArgumentTypeError("--timecode: empty timestamp")
+            secs = self._parse_timestamp(tok)
+            if secs < 0:
+                raise argparse.ArgumentTypeError(
+                    f"--timecode: invalid timestamp '{tok}'. Use S, M:S, or H:M:S (e.g., 0:10, 1:30.5).")
+            self.timecodes.append(secs)
+        self.timecodes.sort()
+        if len(set(self.timecodes)) != len(self.timecodes):
+            raise argparse.ArgumentTypeError("--timecode: duplicate timestamps")
+        return self.timecodes
+
+    @staticmethod
+    def _parse_timestamp(tok: str) -> float:
+        """Parse a timestamp into seconds: 12, 1:30, 1:30.5, 00:10:05.5 -> float seconds. -1 if invalid."""
+        parts = tok.split(":")
+        try:
+            if len(parts) == 1:
+                return float(parts[0])
+            elif len(parts) == 2:
+                m = int(parts[0])
+                s = float(parts[1])
+                if m < 0 or s < 0:
+                    return -1
+                return m * 60 + s
+            elif len(parts) == 3:
+                h = int(parts[0])
+                m = int(parts[1])
+                s = float(parts[2])
+                if h < 0 or m < 0 or s < 0:
+                    return -1
+                return h * 3600 + m * 60 + s
+        except ValueError:
+            return -1
+        return -1
 
     def _parse_addsound(self, value: str) -> None:
         value = value.strip()
@@ -972,11 +1135,379 @@ class TimelapseBuilder:
 
         return cmd
 
+    def revert(self) -> int:
+        """Extract every FR-th frame from a video into JPGs in the output directory."""
+        print(f"{SCRIPT_NAME} v{SCRIPT_VER} - {SCRIPT_AUTHOR}")
+        print(f"GitHub: {SCRIPT_GIT}")
+        print()
+        print(f"Revert: extracting every {self.revert_frames}-th frame from {self.infile.name}")
+
+        if not self.input_dir.exists():
+            self.input_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Created output directory: {self.input_dir}")
+        elif not self.input_dir.is_dir():
+            print(f"Error: Output path is not a directory: {self.input_dir}", file=sys.stderr)
+            return 1
+
+        # Probe input video: frame count + fps
+        probe_info = {
+            "frames": None,
+            "fps": None,
+        }
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-v", "error",
+                 "-select_streams", "v:0",
+                 "-count_frames",
+                 "-show_entries", "stream=nb_read_frames,r_frame_rate",
+                 "-of", "default=noprint_wrappers=1",
+                 str(self.infile)],
+                capture_output=True, text=True, check=True,
+            )
+            for line in result.stdout.splitlines():
+                if "=" in line:
+                    key, _, val = line.strip().partition("=")
+                    if key == "nb_read_frames":
+                        probe_info["frames"] = int(val)
+                    elif key == "r_frame_rate":
+                        n, _, d = val.partition("/")
+                        try:
+                            probe_info["fps"] = float(n) / float(d) if float(d) else float(n)
+                        except ValueError:
+                            pass
+        except (subprocess.CalledProcessError, ValueError):
+            pass
+
+        total_frames = probe_info["frames"]
+        fps = probe_info["fps"]
+
+        if total_frames:
+            print(f"Source: {total_frames} frames @ {fps:.2f} fps" if fps else f"Source: {total_frames} frames")
+        else:
+            print("Source: frame count could not be determined; using -select 1 to pick frames")
+
+        frame_step = self.revert_frames
+        expected = None
+        if frame_step and total_frames:
+            expected = (total_frames + frame_step - 1) // frame_step
+            print(f"Step: every {frame_step}-th frame -> ~{expected} JPG files (of {total_frames})")
+        elif self.timecodes:
+            print(f"Timecode: {len(self.timecodes)} frame(s) at {', '.join(self._fmt_ts(t) for t in self.timecodes)}")
+        # Build output filename pattern: <stem>_%04d.jpg
+        stem = self.infile.stem
+        pattern = f"{stem}_%04d.jpg"
+        out_pattern = str(self.input_dir / pattern)
+
+        # Map compress (0-100) to FFmpeg q:v (-q:v / -qscale:v) scale ~1..31
+        # 0 -> 1 (best), 100 -> 31 (worst); values below 2 are lossless-tending, clamp to >=2
+        q = round(1 + (self.compress / 100.0) * 30)  # 1..31
+        q = max(2, min(31, q))
+
+        # ---- Build the quality filter chain (scale -> flip -> rotate) ----
+        # Resize precedence: --scale > --width/--height > -resize
+        scale_flags = "bilinear" if self.fast_scale else "lanczos"
+        qfilters = []
+        if self.scale_percent is not None:
+            qfilters.append(f"scale=iw*{self.scale_percent}:ih*{self.scale_percent}:flags={scale_flags}")
+        elif self.width_out is not None:
+            qfilters.append(f"scale={self.width_out}:-2:flags={scale_flags}")
+        elif self.height_out is not None:
+            qfilters.append(f"scale=-2:{self.height_out}:flags={scale_flags}")
+        elif self.resize_percent:
+            qfilters.append(f"scale=iw*{self.resize_percent}:ih*{self.resize_percent}:flags={scale_flags}")
+        elif self.resize_width:
+            qfilters.append(f"scale={self.resize_width}:-2:flags={scale_flags}")
+        elif self.resize_height:
+            qfilters.append(f"scale=-2:{self.resize_height}:flags={scale_flags}")
+
+        if self.rotate_flip:
+            if self.rotate_flip == "H":
+                qfilters.append("hflip")
+            elif self.rotate_flip == "V":
+                qfilters.append("vflip")
+            elif self.rotate_flip == "HV":
+                qfilters.append("hflip,vflip")
+
+        if self.rotate_angle is not None:
+            import math
+            radians = math.radians(self.rotate_angle)
+            qfilters.append(f"rotate={radians}:ow=rotw({radians}):oh=roth({radians})")
+            if self.rotate_cut:
+                # Derive source dimensions from the first extracted frame's dimensions is complex;
+                # instead reuse the classic largest-inscribed-rectangle crop computed from input size.
+                # Probe input for width/height.
+                try:
+                    pres = subprocess.run(
+                        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                         "-show_entries", "stream=width,height", "-of", "default=noprint_wrappers=1:nokey=1",
+                         str(self.infile)],
+                        capture_output=True, text=True, check=True, timeout=20,
+                    )
+                    dims = [int(x) for x in pres.stdout.split() if x.strip().isdigit()]
+                    if len(dims) >= 2:
+                        W0, H0 = dims[0], dims[1]
+                        W, H = self._apply_revert_scale(W0, H0)
+                        cw, ch = self._compute_rotate_crop(W, H, radians)
+                        qfilters.append(f"crop={cw}:{ch}")
+                except (subprocess.CalledProcessError, ValueError):
+                    pass
+
+        if qfilters:
+            filter_chain = ",".join(qfilters)
+        else:
+            filter_chain = None
+
+        def build_base_cmd() -> List[str]:
+            c = ["ffmpeg", "-y"]
+            c.extend(["-i", str(self.infile)])
+            c.extend(["-vsync", "vfr", "-q:v", str(q)])
+            if self.verbose:
+                c.extend(["-loglevel", "info"])
+            else:
+                c.extend(["-loglevel", "warning", "-stats"])
+            return c
+
+        # Output name pattern (revert-step mode uses printf-style auto-numbering)
+        stem = self.infile.stem
+        out_pattern = str(self.input_dir / f"{stem}_%04d.jpg")
+
+        # ---- Decide execution mode: -revert (single pass) vs --timecode (per-timestamp seeks) ----
+        use_timecode = bool(self.timecodes)
+        if use_timecode:
+            # Single-frame extraction per timestamp via accurate seeking (one FFmpeg run per point).
+            duration = (total_frames / fps) if (total_frames and fps) else None
+            if duration is not None:
+                for t in self.timecodes:
+                    if t > duration:
+                        print(f"Warning: timestamp {self._fmt_ts(t)} is past the end of the video "
+                              f"({duration:.1f}s) - no frame will be saved.", file=sys.stderr)
+            commands = []
+            for i, t in enumerate(self.timecodes, start=1):
+                c = ["ffmpeg", "-y"]
+                c.extend(["-ss", self._fmt_ts(t), "-i", str(self.infile)])
+                if filter_chain:
+                    c.extend(["-vf", filter_chain])
+                c.extend(["-frames:v", "1", "-q:v", str(q)])
+                c.append(str(self.input_dir / f"{stem}_{i:04d}.jpg"))
+                if self.verbose:
+                    c.extend(["-loglevel", "info"])
+                else:
+                    c.extend(["-loglevel", "warning", "-stats"])
+                commands.append(c)
+            if self.dry_run:
+                print("\nFFmpeg commands (one per timestamp):")
+                for c in commands:
+                    print(" ".join(c))
+                return 0
+            return self._run_timecode_extract(commands, stem)
+        else:
+            # Combine the select step with the quality filters into a single -vf chain.
+            parts = []
+            if filter_chain:
+                parts.append(filter_chain)
+            parts.append(f"select=not(mod(n\\,{frame_step}))")
+            vf = ",".join(parts)
+            cmd = build_base_cmd()
+            cmd.extend(["-vf", vf])
+            cmd.append(out_pattern)
+            if self.dry_run:
+                print("\nFFmpeg command:")
+                print(" ".join(cmd))
+                return 0
+            frame_pattern = re.compile(r"frame=\s*(\d+)")
+            progress = {"frame": None}
+
+            def read_out(proc: subprocess.Popen) -> None:
+                for line in proc.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    m = frame_pattern.search(line)
+                    if m:
+                        progress["frame"] = int(m.group(1))
+
+            print("\nExtracting frames...")
+            start_time = time.time()
+            last_progress = 0
+
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                    bufsize=1,
+                )
+                reader = threading.Thread(target=read_out, args=(process,), daemon=True)
+                reader.start()
+                last_render_pct = 0.0
+
+                def render(saved: int, source_pos: int, elapsed: float, force: bool = False) -> None:
+                    nonlocal last_render_pct
+                    # Percent of JPGs saved (the real task progress)
+                    if expected and expected > 0:
+                        pct = min(100.0, (saved / expected) * 100)
+                    else:
+                        pct = None
+
+                    elapsed_str = self.format_time(elapsed)
+                    eta_str = ""
+                    if total_frames and elapsed > 0:
+                        proc_speed = source_pos / elapsed
+                        if proc_speed > 0:
+                            remaining = max(0, total_frames - source_pos)
+                            eta_str = f"  |  ETA: {self.format_time(remaining / proc_speed)}"
+
+                    # Tempo at which JPG files are produced (images/s)
+                    speed_str = ""
+                    if elapsed > 0 and saved > 0:
+                        speed_str = f"  |  ~{saved / elapsed:.1f} imgs/s"
+
+                    if expected:
+                        files_str = f"{saved}/{expected} images"
+                    else:
+                        files_str = f"{saved} images"
+
+                    if pct is not None:
+                        pct_str = f"  |  {pct:5.1f}%"
+                        last_render_pct = pct
+                    else:
+                        pct_str = ""
+
+                    print(f"\r  [{files_str}]{pct_str}  |  Elapsed: {elapsed_str}{speed_str}{eta_str}   ",
+                          end="", flush=True)
+
+                while reader.is_alive():
+                    cur = progress["frame"]
+                    if cur is not None:
+                        progress["frame"] = None
+                        now = time.time()
+                        if now - last_progress >= 0.5:
+                            elapsed = now - start_time
+
+                            # FFmpeg `frame=` with the select filter reports the position in the
+                            # SOURCE stream; saved JPGs = every frame_step-th source frame.
+                            source_pos = cur
+                            saved = (source_pos + frame_step - 1) // frame_step if frame_step else 0
+
+                            render(saved, source_pos, elapsed)
+                            last_progress = now
+                    time.sleep(0.25)
+
+                process.wait()
+
+                # If the final 100% line was never shown (reader may stop before the last
+                # progress update arrives), print it now so the count always reaches M/100%.
+                if process.returncode == 0 and (expected is None or last_render_pct < 100.0):
+                    elapsed = time.time() - start_time
+                    render(expected if expected else len(list(self.input_dir.glob(f"{stem}_*.jpg"))),
+                           total_frames if total_frames else 0, elapsed, force=True)
+
+                print()
+                if process.returncode != 0:
+                    raise subprocess.CalledProcessError(process.returncode, cmd)
+
+                saved = sorted(self.input_dir.glob(f"{stem}_*.jpg"))
+                print(f"Done! Saved {len(saved)} JPG files to {self.input_dir}")
+                if saved:
+                    print(f"  Example: {saved[0].name} ... {saved[-1].name}")
+                return 0
+
+            except subprocess.CalledProcessError as e:
+                print(f"\nError: FFmpeg exited with code {e.returncode}.", file=sys.stderr)
+                return e.returncode
+            except FileNotFoundError:
+                print("Error: ffmpeg not found in PATH", file=sys.stderr)
+                return 1
+            except KeyboardInterrupt:
+                print("\nInterrupted.")
+                return 130
+
+    @staticmethod
+    def _fmt_ts(seconds: float) -> str:
+        """Format seconds as H:MM:SS.mmm for ffmpeg -ss seeking."""
+        s = float(seconds)
+        if s < 0:
+            s = 0.0
+        ms = int(round((s - int(s)) * 1000))
+        total = int(s)
+        h = total // 3600
+        m = (total % 3600) // 60
+        sec = total % 60
+        return f"{h}:{m:02d}:{sec:02d}.{ms:03d}"
+
+    def _run_timecode_extract(self, commands: List[List[str]], stem: str) -> int:
+        """Run one ffmpeg extraction per requested timestamp, showing live progress."""
+        print("\nExtracting frames...")
+        total = len(commands)
+        start_time = time.time()
+
+        for idx, cmd in enumerate(commands, start=1):
+            elapsed = time.time() - start_time
+            pct = (idx - 1) / total * 100.0
+            print(f"\r  [{idx - 1}/{total} images]  |  {pct:5.1f}%  |  "
+                  f"Elapsed: {self.format_time(elapsed)}   ", end="", flush=True)
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+            except FileNotFoundError:
+                print("\nError: ffmpeg not found in PATH", file=sys.stderr)
+                return 1
+            if result.returncode != 0:
+                print(f"\nError: FFmpeg failed on timestamp {idx} of {total} (exit {result.returncode}).",
+                      file=sys.stderr)
+                if result.stderr:
+                    tail = "\n".join(result.stderr.splitlines()[-6:])
+                    print(tail, file=sys.stderr)
+                return result.returncode
+
+        elapsed = time.time() - start_time
+        print(f"\r  [{total}/{total} images]  |  100.0%  |  Elapsed: {self.format_time(elapsed)}   ")
+        saved = sorted(self.input_dir.glob(f"{stem}_*.jpg"))
+        print(f"Done! Saved {len(saved)} JPG files to {self.input_dir}")
+        if saved:
+            print(f"  Example: {saved[0].name} ... {saved[-1].name}")
+        return 0
+
+    def _apply_revert_scale(self, w0: int, h0: int) -> Tuple[int, int]:
+        """Return the output dimensions after applying the revert resize options."""
+        if self.scale_percent is not None:
+            return max(2, int(w0 * self.scale_percent)), max(2, int(h0 * self.scale_percent))
+        if self.width_out is not None:
+            new_w = self.width_out
+            new_h = int(h0 * new_w / w0)
+            if new_h % 2:
+                new_h -= 1
+            return new_w, max(2, new_h)
+        if self.height_out is not None:
+            new_h = self.height_out
+            new_w = int(w0 * new_h / h0)
+            if new_w % 2:
+                new_w -= 1
+            return max(2, new_w), new_h
+        if self.resize_width:
+            new_w = self.resize_width
+            new_h = int(h0 * new_w / w0)
+            if new_h % 2:
+                new_h -= 1
+            return new_w, max(2, new_h)
+        if self.resize_height:
+            new_h = self.resize_height
+            new_w = int(w0 * new_h / h0)
+            if new_w % 2:
+                new_w -= 1
+            return max(2, new_w), new_h
+        if self.resize_percent:
+            return max(2, int(w0 * self.resize_percent)), max(2, int(h0 * self.resize_percent))
+        return w0, h0
+
     def run(self) -> int:
         self.parse_args()
 
         if not check_dependencies():
             return 1
+
+        if self.infile is not None or self.revert_frames is not None or self.timecodes:
+            return self.revert()
 
         print(f"{SCRIPT_NAME} v{SCRIPT_VER} - {SCRIPT_AUTHOR}")
         print(f"GitHub: {SCRIPT_GIT}")
